@@ -1,0 +1,330 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearch"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_DIRECT_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  uuid      String   @unique @default(dbgenerated("nanoid(12)")) @db.VarChar(12)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  email             String            @unique
+  phone             String?           @unique
+  name              String?
+  timeZone          String            @default("America/Edmonton")
+  oldSubscription   UserSubscription? // DEPRECATED
+  pushSubscriptions Json[]
+  affiliateId       String?           @unique
+  referralId        String?
+
+  // Relationships
+  availabilityRequests      AvailabilityRequest[]
+  availabilityNotifications AvailabilityNotification[]
+  subscription              Subscription?
+  schedule                  Schedule[]
+}
+
+model Subscription {
+  id        Int      @id @default(autoincrement())
+  uuid      String   @unique @default(dbgenerated("nanoid(12)")) @db.VarChar(12)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  status                 SubscriptionStatus @default(trial)
+  trialNotificationsLeft Int                @default(10)
+  trialFollowupSentAt    DateTime?
+
+  // Features
+  maxActiveRequests Int
+
+  stripeCustomerId     String? @unique
+  stripeSubscriptionId String? @unique
+
+  user         User?         @relation(fields: [userId], references: [id])
+  userId       Int?          @unique
+  userEmail    String        @unique // used to find a subscription for a deleted user
+  usageRecords UsageRecord[]
+
+  @@index([status])
+  @@index([trialNotificationsLeft])
+  @@index([status, trialNotificationsLeft])
+}
+
+model Schedule {
+  id        Int      @id @default(autoincrement())
+  uuid      String   @unique @default(dbgenerated("nanoid(12)")) @db.VarChar(12)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  isEnabled Boolean      @default(true)
+  type      ScheduleType @default(exclude)
+  days      Int[] // 0 | 1 | 2 | 3 | 4 | 5 | 6 the day of week, 0 represents Sunday
+  from      String // HH:mm
+  to        String // HH:mm
+
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId Int
+}
+
+model Agency {
+  id        Int      @id @default(autoincrement())
+  uuid      String   @unique @default(dbgenerated("nanoid(12)")) @db.VarChar(12)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  name    String      @unique
+  scanner ScannerType @unique
+
+  // Relationships
+  facilitys Facility[]
+}
+
+model Facility {
+  id        Int      @id @default(autoincrement())
+  uuid      String   @unique @default(dbgenerated("nanoid(12)")) @db.VarChar(12)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  slug    String @unique
+  name    String
+  subName String
+
+  reservationStartDate DateTime
+  reservationEndDate   DateTime
+
+  // Relationships
+  agency               Agency                @relation(fields: [agencyId], references: [id])
+  agencyId             Int
+  sites                Site[]
+  availabilityRequests AvailabilityRequest[]
+
+  @@unique(fields: [name, subName], name: "facilitySlug")
+  @@index([name])
+  @@index([subName])
+}
+
+model Site {
+  id        Int      @id @default(autoincrement())
+  uuid      String   @unique @default(dbgenerated("nanoid(12)")) @db.VarChar(12)
+  seedKey   String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  name       String
+  group      String?
+  reserveUrl String
+  photos     String[]
+
+  reservationStartDate DateTime
+  reservationEndDate   DateTime
+
+  // Common filters
+  type         SiteType
+  isAccessible Boolean  @default(false)
+
+  // Frontcountry filters
+  maxRVLength   Int? // 21/24/27/35/50 (ParksCanada) 20/30/40/50
+  isPullThrough Boolean @default(false)
+  isDoubleSite  Boolean @default(false)
+  hasWater      Boolean @default(false)
+  hasSewer      Boolean @default(false)
+  hasElectric   Boolean @default(false)
+  maxElectric   Int? // 15/20/30/50
+
+  // Custom fields (usually for scanner)
+  extraAttributes Json?
+
+  // Relationships
+  facilities           Facility[]
+  availabilityRequests AvailabilityRequest[]
+  availabilityMatches  AvailabilityMatch[]
+}
+
+model AvailabilityRequest {
+  id        Int      @id @default(autoincrement())
+  uuid      String   @unique @default(dbgenerated("nanoid(12)")) @db.VarChar(12)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Required
+  status          AvailabilityRequestStatus @default(active)
+  selectedDates   Int[] // format: yyyyMMdd to be consistent with startDate/endDate
+  selectedSiteIds Int[]
+  minStayLength   Int
+
+  // Date selection UI
+  startDate   Int // format: yyyyMMdd for aggregation reasons
+  endDate     Int // format: yyyyMMdd for aggregation reasons
+  arrivalDays Int[] // 0 | 1 | 2 | 3 | 4 | 5 | 6 the day of week, 0 represents Sunday
+
+  // Site selection UI
+  siteType      SiteType
+  isTentOnly    Boolean  @default(false)
+  isDoubleSite  Boolean  @default(false)
+  isAccessible  Boolean  @default(false)
+  isPullThrough Boolean  @default(false)
+  hasWater      Boolean  @default(false)
+  hasSewer      Boolean  @default(false)
+  hasElectric   Boolean  @default(false)
+  maxElectric   Int? // 15/20/30/50
+  // 21/24/27/35/36 (ParksCanada)
+  // 20/30/40/50/60/61 (Alberta Parks)
+  // 18/32/33 (BCParks)
+  // 18/25/32/33 (OntarioParks)
+  maxRVLength   Int?
+
+  // Matcher defined fieled
+  checkedCount Int       @default(0) // if we default this to 0 we can use prisma 'increment' on the first import
+  checkedAt    DateTime?
+
+  // Relationships
+  user                      User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId                    Int
+  facility                  Facility?                  @relation(fields: [facilityId], references: [id], onDelete: SetNull)
+  facilityId                Int?
+  sites                     Site[]
+  availabilityMatches       AvailabilityMatch[]
+  availabilityNotifications AvailabilityNotification[]
+
+  @@index([status])
+  @@index([userId, status])
+}
+
+model AvailabilityMatch {
+  id   Int    @id @default(autoincrement())
+  uuid String @unique @default(dbgenerated("nanoid(12)")) @db.VarChar(12)
+
+  // Matcher defined fields
+  available       Boolean
+  availableAt     DateTime  @default(now())
+  availableDate   DateTime
+  availableLength Int
+  unavailableAt   DateTime?
+
+  // Success tracking fields
+  clickedAt         DateTime? // *first* time the match was clicked
+  seenAt            DateTime? // *first* time the match was loaded
+  wasUserSuccessful Boolean?
+  userFeedback      String?
+
+  // Relationships
+  availabilityRequest          AvailabilityRequest       @relation(fields: [availabilityRequestId], references: [id], onDelete: Cascade)
+  availabilityRequestId        Int
+  site                         Site?                     @relation(fields: [siteId], references: [id], onDelete: SetNull)
+  siteId                       Int?
+  availabilityNotification     AvailabilityNotification? @relation(fields: [availabilityNotificationUuid], references: [uuid], onDelete: Cascade)
+  availabilityNotificationUuid String?
+
+  // duplidateFromId correctly stores another availabilityMatchId
+  // but the foreign key pieces of the relationship make updates/deletes SO, SO slow.
+  // so, until i figure out sql better, we're leaving these relationships out
+  // but keeping the field to use for simple boolean logiv
+  // 
+  // duplicateTo                  AvailabilityMatch[]       @relation("DuplicateMatchHistory")
+  // duplicateFrom                AvailabilityMatch?        @relation("DuplicateMatchHistory", fields: [duplicateFromId], references: [id], onDelete: Cascade)
+  duplicateFromId Int?
+
+  // This is a pretty good motivator for creating a new SiteAvailability table
+  // since all of these indexes are duplicated for each user's match
+  @@index([available])
+  @@index([availableAt])
+  @@index([availableDate])
+  @@index([availabilityNotificationUuid])
+}
+
+model AvailabilityNotification {
+  id        Int      @id @default(autoincrement())
+  uuid      String   @unique @default(dbgenerated("nanoid(12)")) @db.VarChar(12)
+  createdAt DateTime @default(now())
+
+  status AvailabilityNotificationStatus
+
+  deliveredAt DateTime?
+  openedAt    DateTime?
+  clickedAt   DateTime?
+  clickedLink String?
+
+  user                  User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId                Int
+  availabilityRequest   AvailabilityRequest @relation(fields: [availabilityRequestId], references: [id], onDelete: Cascade)
+  availabilityRequestId Int
+  availabilityMatches   AvailabilityMatch[]
+  usageRecord           UsageRecord?        @relation(fields: [usageRecordId], references: [id])
+  usageRecordId         Int?
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model UsageRecord {
+  id        Int      @id @default(autoincrement())
+  uuid      String   @unique @default(dbgenerated("nanoid(12)")) @db.VarChar(12)
+  createdAt DateTime @default(now())
+
+  stripeUsageRecordId String
+
+  subscriptionId            Int
+  subscription              Subscription               @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  availabilityNotifications AvailabilityNotification[]
+}
+
+enum ScannerType {
+  ParksCanada
+  AlbertaParks
+  BCParks
+  OntarioParks
+  UpperThames
+}
+
+enum SiteType {
+  rv
+  tent
+  rv_tent
+  backcountry
+  group
+  lodging // e.g. cabin, hut, etc.
+  other // e.g. bus, event, etc.
+}
+
+enum AvailabilityRequestStatus {
+  active
+  paused
+  cancelled
+  expired
+}
+
+enum AvailabilityNotificationStatus {
+  sent_active
+  sent_active_unrecordable // all duplicate matches
+  sent_trial
+  sent_trial_unrecordable // all duplicate matches
+  unsent_trial_expired
+  unsent_user_unavailable // quiet times
+}
+
+enum SubscriptionStatus {
+  active_unlimited
+  active_flexible
+  trial
+}
+
+enum ScheduleType {
+  include
+  exclude
+}
+
+// DEPRECATED
+enum UserSubscription {
+  free
+  unlimited
+}
