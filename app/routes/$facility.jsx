@@ -2,6 +2,10 @@ import { uniq, map, mapValues } from "lodash";
 import { json } from "@vercel/remix";
 import { db } from '~/db.server'
 
+export default function() {
+  return <div>$facility route</div>
+}
+
 export async function loader({ params }) {
   const facility = await db.facility.findUnique({
     where: {
@@ -24,10 +28,30 @@ export async function loader({ params }) {
     });
   }
 
-  return json({
+  const data = {
     facility,
     ...getLoaderData(facility),
+  }
+
+  let init = {
+    // headers: {
+    //   'Content-Length': 99999999
+    // }
+  }
+
+  let responseInit = typeof init === "number" ? { status: init } : init;
+
+  let headers = new Headers(responseInit.headers);
+
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json; charset=utf-8");
+  }
+
+  return new Response(JSON.stringify(data), {
+    ...responseInit,
+    headers,
   });
+  // return json(data);
 }
 
 const sortedFiltersBySiteType = {
